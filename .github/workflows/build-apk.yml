@@ -1,0 +1,75 @@
+
+name: Build Watch8 ContractPulse V2 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Unpack source ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="Watch8_ContractPulse_V2_Source.zip"
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Source ZIP missing!"
+            exit 1
+          fi
+          unzip -oq "$ZIP" -d "$GITHUB_WORKSPACE"
+          for file in settings.gradle build.gradle gradle.properties app/build.gradle app/src/main/AndroidManifest.xml tools/test-time-math.sh; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing $file"
+              exit 1
+            fi
+          done
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Use preinstalled Android SDK
+        shell: bash
+        run: |
+          set -e
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          if [ ! -f "$SDK_ROOT/platforms/android-35/android.jar" ] || [ ! -x "$SDK_ROOT/build-tools/35.0.0/aapt2" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+            "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install 'platforms;android-35' 'build-tools;35.0.0'
+          fi
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Test timer arithmetic
+        run: bash tools/test-time-math.sh
+
+      - name: Build APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Watch8-ContractPulse-V2-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
